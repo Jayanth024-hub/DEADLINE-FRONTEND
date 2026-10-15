@@ -3,6 +3,7 @@ import {
   INITIAL_OPPORTUNITIES, 
   calculateDeadlineStatus 
 } from '../data/mockData';
+import { buildApiUrl } from '../config/api';
 
 const STORAGE_KEYS = {
   CURRENT_USER: 'deadlineiq_authenticated_user',
@@ -50,7 +51,7 @@ export const authService = {
 
   async verifySession() {
     try {
-      const res = await fetch('/api/auth/me', {
+      const res = await fetch(buildApiUrl('/api/auth/me'), {
         headers: getAuthHeaders(),
         credentials: 'include'
       });
@@ -80,14 +81,14 @@ export const authService = {
   async login(email, password) {
     let res;
     try {
-      res = await fetch('/api/auth/login', {
+      res = await fetch(buildApiUrl('/api/auth/login'), {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
         credentials: 'include',
         body: JSON.stringify({ email: email.trim().toLowerCase(), password })
       });
     } catch (networkError) {
-      throw new Error('Cannot connect to Spring Boot server. Please ensure the backend is running on port 8080.');
+      throw new Error('Cannot reach the backend server. Please verify network connectivity and backend status.');
     }
 
     let data = {};
@@ -95,7 +96,7 @@ export const authService = {
       data = await res.json();
     } catch (e) {
       if (res.status === 404) {
-        throw new Error('Authentication service endpoint not found (404). Please ensure the backend is running on port 8080.');
+        throw new Error('Authentication service endpoint not found (404). Please ensure the backend is deployed and configured correctly.');
       }
       throw new Error(`Server returned error status ${res.status}.`);
     }
@@ -138,7 +139,7 @@ export const authService = {
 
     let res;
     try {
-      res = await fetch('/api/auth/register', {
+      res = await fetch(buildApiUrl('/api/auth/register'), {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
         credentials: 'include',
@@ -154,7 +155,7 @@ export const authService = {
         })
       });
     } catch (networkError) {
-      throw new Error('Cannot connect to Spring Boot server. Please make sure the backend is running on port 8080.');
+      throw new Error('Cannot reach the backend server. Please verify network connectivity and backend status.');
     }
 
     let data = {};
@@ -171,13 +172,12 @@ export const authService = {
       throw new Error(data.error || data.message || `Registration failed (${res.status}).`);
     }
 
-    // Notice: Do NOT automatically log in. User must sign in.
     return { success: true, message: data.message || 'Account registered successfully. You may now sign in.' };
   },
 
   async logout() {
     try {
-      await fetch('/api/auth/logout', {
+      await fetch(buildApiUrl('/api/auth/logout'), {
         method: 'POST',
         headers: getAuthHeaders(),
         credentials: 'include'
@@ -188,13 +188,13 @@ export const authService = {
 };
 
 /* =========================================================================
-   DEADLINES SERVICE (Backend REST + fallback)
+   DEADLINES SERVICE (Backend REST + local fallback)
    ========================================================================= */
 
 export const deadlineService = {
   async getDeadlines() {
     try {
-      const res = await fetch('/api/deadlines', {
+      const res = await fetch(buildApiUrl('/api/deadlines'), {
         headers: getAuthHeaders(),
         credentials: 'include'
       });
@@ -216,7 +216,7 @@ export const deadlineService = {
 
   async addDeadline(deadlineData) {
     try {
-      const res = await fetch('/api/deadlines', {
+      const res = await fetch(buildApiUrl('/api/deadlines'), {
         method: 'POST',
         headers: getAuthHeaders(),
         credentials: 'include',
@@ -276,13 +276,13 @@ export const deadlineService = {
 };
 
 /* =========================================================================
-   OPPORTUNITY SERVICE (Backend REST + fallback)
+   OPPORTUNITY SERVICE (Backend REST + local fallback)
    ========================================================================= */
 
 export const opportunityService = {
   async getOpportunities() {
     try {
-      const res = await fetch('/api/opportunities', {
+      const res = await fetch(buildApiUrl('/api/opportunities'), {
         headers: getAuthHeaders(),
         credentials: 'include'
       });
@@ -297,7 +297,7 @@ export const opportunityService = {
 
   async addOpportunity(opportunityData) {
     try {
-      const res = await fetch('/api/opportunities', {
+      const res = await fetch(buildApiUrl('/api/opportunities'), {
         method: 'POST',
         headers: getAuthHeaders(),
         credentials: 'include',
@@ -320,7 +320,7 @@ export const opportunityService = {
 
   async registerStudent(opportunityId, studentNameOrEmail) {
     try {
-      const res = await fetch(`/api/opportunities/${opportunityId}/register`, {
+      const res = await fetch(buildApiUrl(`/api/opportunities/${opportunityId}/register`), {
         method: 'POST',
         headers: getAuthHeaders(),
         credentials: 'include'
@@ -344,16 +344,16 @@ export const opportunityService = {
 };
 
 /* =========================================================================
-   USER-ISOLATED AI CHAT SERVICE
+   USER-ISOLATED AI CHAT SERVICE (Spring AI + Gemini + MySQL Memory)
    ========================================================================= */
 
 export const chatService = {
   async sendMessage(messageText, conversationId = 'default-session', userId = null) {
     const headers = getAuthHeaders();
     
-    // 1. Try real Spring Boot backend /api/chat
+    // 1. POST /api/chat
     try {
-      const res = await fetch('/api/chat', {
+      const res = await fetch(buildApiUrl('/api/chat'), {
         method: 'POST',
         headers,
         credentials: 'include',
@@ -371,15 +371,20 @@ export const chatService = {
       if (res.status === 401) {
         throw new Error('Authentication required. Please log in.');
       }
+      if (res.status === 403) {
+        throw new Error('Access denied to this conversation.');
+      }
     } catch (e) {
-      if (e.message?.includes('Authentication required')) throw e;
+      if (e.message?.includes('Authentication required') || e.message?.includes('Access denied')) {
+        throw e;
+      }
     }
 
-    // 2. Try GET /api/chat?message=...
+    // 2. GET /api/chat fallback
     try {
       const params = new URLSearchParams({ message: messageText, conversationId });
       if (userId) params.append('userId', String(userId));
-      const res = await fetch(`/api/chat?${params.toString()}`, {
+      const res = await fetch(buildApiUrl(`/api/chat?${params.toString()}`), {
         headers,
         credentials: 'include'
       });
@@ -402,7 +407,7 @@ export const chatService = {
   async getConversationHistory(conversationId, userId = null) {
     try {
       const params = userId ? `?userId=${userId}` : '';
-      const res = await fetch(`/api/chat/history/${conversationId}${params}`, {
+      const res = await fetch(buildApiUrl(`/api/chat/history/${conversationId}${params}`), {
         headers: getAuthHeaders(),
         credentials: 'include'
       });
@@ -416,12 +421,90 @@ export const chatService = {
   async clearConversation(conversationId, userId = null) {
     try {
       const params = userId ? `?userId=${userId}` : '';
-      await fetch(`/api/chat/${conversationId}${params}`, {
+      await fetch(buildApiUrl(`/api/chat/${conversationId}${params}`), {
         method: 'DELETE',
         headers: getAuthHeaders(),
         credentials: 'include'
       });
     } catch (e) {}
+  }
+};
+
+/* =========================================================================
+   PINECONE CUSTOM RAG & DOCUMENT SERVICE (Spring AI + Pinecone + PDFBox)
+   ========================================================================= */
+
+export const ragService = {
+  async getStatus() {
+    try {
+      const res = await fetch(buildApiUrl('/api/rag/status'), {
+        headers: { 'Accept': 'application/json' },
+        credentials: 'include'
+      });
+      if (res.ok) {
+        return await res.json();
+      }
+    } catch (e) {}
+    return { status: 'offline', ragEnabled: false };
+  },
+
+  async uploadDocument(file) {
+    const formData = new FormData();
+    formData.append('file', file);
+
+    const headers = {};
+    const authHeaders = getAuthHeaders();
+    if (authHeaders['Authorization']) headers['Authorization'] = authHeaders['Authorization'];
+    if (authHeaders['X-User-Id']) headers['X-User-Id'] = authHeaders['X-User-Id'];
+    if (authHeaders['X-User-Email']) headers['X-User-Email'] = authHeaders['X-User-Email'];
+
+    const res = await fetch(buildApiUrl('/api/rag/upload'), {
+      method: 'POST',
+      headers,
+      credentials: 'include',
+      body: formData
+    });
+
+    const text = await res.text();
+    if (!res.ok) {
+      throw new Error(text || `Document upload failed with status ${res.status}`);
+    }
+    return text;
+  },
+
+  async askRag(message, conversationId = 'default-rag') {
+    const res = await fetch(buildApiUrl('/api/rag/chat'), {
+      method: 'POST',
+      headers: getAuthHeaders(),
+      credentials: 'include',
+      body: JSON.stringify({ message, conversationId })
+    });
+    const text = await res.text();
+    if (!res.ok) {
+      throw new Error(text || `RAG query failed with status ${res.status}`);
+    }
+    return text;
+  }
+};
+
+/* =========================================================================
+   HEALTH CHECK SERVICE
+   ========================================================================= */
+
+export const healthService = {
+  async checkHealth() {
+    try {
+      const res = await fetch(buildApiUrl('/api/health'), {
+        headers: { 'Accept': 'application/json' },
+        credentials: 'omit'
+      });
+      if (res.ok) {
+        return await res.json();
+      }
+      return { status: 'DOWN', error: `HTTP ${res.status}` };
+    } catch (err) {
+      return { status: 'DOWN', error: err.message };
+    }
   }
 };
 
@@ -432,7 +515,7 @@ export const chatService = {
 export const userService = {
   async getAllUsers() {
     try {
-      const res = await fetch('/api/admin/users', {
+      const res = await fetch(buildApiUrl('/api/admin/users'), {
         headers: getAuthHeaders(),
         credentials: 'include'
       });
@@ -444,7 +527,7 @@ export const userService = {
   },
 
   async addUser(newUser) {
-    const res = await fetch('/api/admin/users', {
+    const res = await fetch(buildApiUrl('/api/admin/users'), {
       method: 'POST',
       headers: getAuthHeaders(),
       credentials: 'include',
@@ -458,7 +541,7 @@ export const userService = {
   },
 
   async deleteUser(id) {
-    const res = await fetch(`/api/admin/users/${id}`, {
+    const res = await fetch(buildApiUrl(`/api/admin/users/${id}`), {
       method: 'DELETE',
       headers: getAuthHeaders(),
       credentials: 'include'
